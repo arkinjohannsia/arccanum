@@ -43,10 +43,8 @@ LoRa packet: `ARC,<CRIT|COLOR>,<pH>,<sequence>`, for example `ARC,CRIT,12.31,42`
 | RA-02 | RST / DIO0 | 14 / 26 |
 | RA-02 | VCC | **3.3 V only** |
 | TCS34725 + SSD1306 (shared I2C) | SDA / SCL | 21 / 22 |
-| pH amplifier (PO / analog out) | through a voltage divider | 34 |
+| pH amplifier (PO / analog out) | direct | 34 |
 | White LED (via resistor or transistor) | + | 25 |
-
-The pH amplifier boards (e.g. PH-4502C) are powered from 5 V and can output more than 3.3 V. Put a voltage divider (for example 10 kΩ / 20 kΩ) between `PO` and GPIO 34 so the pin never goes above 3.3 V. The calibration below is done on the divided voltage, so the divider ratio does not need to be entered anywhere.
 
 If your TCS34725 breakout has its own white LED, you can drive its `LED` pin from GPIO 25 instead of using a separate LED.
 
@@ -71,24 +69,11 @@ Install with the Arduino Library Manager:
 
 Board: *ESP32 Dev Module* (esp32 core by Espressif).
 
-## Calibration
+## Default values
 
-### pH probe
+The code works as-is with the wiring above; nothing needs to be added or measured.
 
-1. Upload the transmitter sketch and open the Serial Monitor at 115200 baud.
-2. Put the probe in a **pH 7.00** buffer and wait for the reading to settle. Note the `pH voltage` value.
-3. Rinse, put it in a **pH 10.00** buffer and note the voltage. (You can use a different second buffer; change `CAL_PH_2` to match.)
-4. Enter the values in `CAL_VOLTAGE_1` / `CAL_VOLTAGE_2` and upload again.
+- **pH:** uses the standard pH amplifier response (about 2.50 V at pH 7, falling about 0.18 V per pH unit).
+- **Strip colour:** counts the strip as red-rose when its hue is 330–360° or 0–25° and red is at least 1.4 times green. Yellow is about 40–65°.
 
-### Picric acid strip colour
-
-Each intermediate-range reading prints `R G B C hue sat` to the Serial Monitor. Read an unreacted (yellowish) strip and a reacted (red-rose) strip under the white LED, then adjust these values if needed:
-
-| Constant | Default | Meaning |
-|---|---|---|
-| `RED_ROSE_HUE_LOW` / `RED_ROSE_HUE_HIGH` | 330° / 25° | hue window for red-rose (it wraps around 0°); yellow is about 40–65° |
-| `MIN_RED_TO_GREEN` | 1.40 | R/G ratio; yellow is close to 1.0, red-rose is clearly higher |
-| `MIN_SATURATION` | 0.20 | rejects grey or washed-out readings |
-| `MIN_CLEAR` | 100 | rejects readings that are too dark (LED off or no strip) |
-
-Keep the sensor, LED and strip in a fixed, shaded holder so ambient light does not change the reading.
+Every reading (pH voltage, pH, and the TCS34725 R/G/B/C, hue and saturation values) is printed on the Serial Monitor at 115200 baud. All of these limits are constants at the top of `transmitter/transmitter.ino`.

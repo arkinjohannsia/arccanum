@@ -44,7 +44,7 @@
 #define I2C_SDA    21
 #define I2C_SCL    22
 
-// pH amplifier analog output (must be an ADC1 pin; scale it down to <= 3.3 V)
+// pH amplifier analog output (PO), wired directly to this pin
 #define PH_PIN     34
 
 // White illumination LED for the TCS34725 (or the breakout's LED pin)
@@ -57,16 +57,16 @@ const float PH_CRITICAL     = 12.0;  // pH >= this -> immediate critical alert
 const float PH_COLOR_CHECK  = 7.9;   // pH >  this (and < PH_CRITICAL) -> check strip
 
 // ---------------------------------------------------------------------------
-// pH calibration
+// pH conversion
 //
-// Two-point linear calibration. Dip the probe in two buffer solutions, note the
-// voltage printed on the Serial Monitor, and enter the values here. Voltages are
-// measured at the ESP32 pin, i.e. after the voltage divider.
+// Standard response of the pH probe + amplifier board with its output wired
+// straight to the ESP32: about 2.50 V at pH 7, dropping about 0.18 V per pH
+// unit as the water gets more alkaline (pH 10 -> about 1.96 V).
 // ---------------------------------------------------------------------------
 const float CAL_PH_1      = 7.00;
-const float CAL_VOLTAGE_1 = 1.650;   // volts at the pin in pH 7.00 buffer
+const float CAL_VOLTAGE_1 = 2.500;   // volts at the pin at pH 7.00
 const float CAL_PH_2      = 10.00;
-const float CAL_VOLTAGE_2 = 1.270;   // volts at the pin in pH 10.00 buffer
+const float CAL_VOLTAGE_2 = 1.960;   // volts at the pin at pH 10.00
 
 const int PH_SAMPLES = 20;           // ADC samples per pH reading
 
