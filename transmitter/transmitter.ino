@@ -60,13 +60,13 @@ const float PH_COLOR_CHECK  = 7.9;   // pH >  this (and < PH_CRITICAL) -> check 
 // pH conversion
 //
 // Standard response of the pH probe + amplifier board with its output wired
-// straight to the ESP32: about 2.50 V at pH 7, dropping about 0.18 V per pH
-// unit as the water gets more alkaline (pH 10 -> about 1.96 V).
+// straight to the ESP32: 2.60 V at pH 7 on this board, dropping about 0.18 V per pH
+// unit as the water gets more alkaline (pH 10 -> about 2.06 V).
 // ---------------------------------------------------------------------------
 const float CAL_PH_1      = 7.00;
-const float CAL_VOLTAGE_1 = 2.500;   // volts at the pin at pH 7.00
+const float CAL_VOLTAGE_1 = 2.600;   // volts at the pin at pH 7.00 (measured, BNC shorted)
 const float CAL_PH_2      = 10.00;
-const float CAL_VOLTAGE_2 = 1.960;   // volts at the pin at pH 10.00
+const float CAL_VOLTAGE_2 = 2.060;   // volts at the pin at pH 10.00
 
 const int PH_SAMPLES = 20;           // ADC samples per pH reading
 

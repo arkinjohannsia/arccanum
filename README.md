@@ -73,7 +73,7 @@ Board: *ESP32 Dev Module* (esp32 core by Espressif).
 
 The code works as-is with the wiring above; nothing needs to be added or measured.
 
-- **pH:** uses the standard pH amplifier response (about 2.50 V at pH 7, falling about 0.18 V per pH unit).
+- **pH:** uses the standard pH amplifier response (2.60 V at pH 7 on this board, falling about 0.18 V per pH unit).
 - **Strip colour:** counts the strip as red-rose when its hue is 330–360° or 0–25° and red is at least 1.4 times green. Yellow is about 40–65°.
 
 Every reading (pH voltage, pH, and the TCS34725 R/G/B/C, hue and saturation values) is printed on the Serial Monitor at 115200 baud. All of these limits are constants at the top of `transmitter/transmitter.ino`.
