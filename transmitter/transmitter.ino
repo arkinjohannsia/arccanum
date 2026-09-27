@@ -24,6 +24,7 @@
 
 #include <SPI.h>
 #include <Wire.h>
+#include <Preferences.h>
 #include <LoRa.h>
 #include <Adafruit_TCS34725.h>
 #include <Adafruit_GFX.h>
@@ -62,11 +63,14 @@ const float PH_COLOR_CHECK  = 7.9;   // pH >  this (and < PH_CRITICAL) -> check 
 // Standard response of the pH probe + amplifier board with its output wired
 // straight to the ESP32: 2.60 V at pH 7 on this board, dropping about 0.18 V per pH
 // unit as the water gets more alkaline (pH 10 -> about 2.06 V).
+//
+// These are defaults. If the calibration sketch (calibration/calibration.ino)
+// has saved a calibration in the ESP32's memory, it replaces them at startup.
 // ---------------------------------------------------------------------------
-const float CAL_PH_1      = 7.00;
-const float CAL_VOLTAGE_1 = 2.600;   // volts at the pin at pH 7.00 (measured, BNC shorted)
-const float CAL_PH_2      = 10.00;
-const float CAL_VOLTAGE_2 = 2.060;   // volts at the pin at pH 10.00
+float CAL_PH_1      = 7.00;
+float CAL_VOLTAGE_1 = 2.600;   // volts at the pin at pH 7.00 (measured, BNC shorted)
+float CAL_PH_2      = 10.00;
+float CAL_VOLTAGE_2 = 2.060;   // volts at the pin at pH 10.00
 
 const int PH_SAMPLES = 20;           // ADC samples per pH reading
 
@@ -159,6 +163,23 @@ float readPhVoltage() {
   }
   sum -= minV + maxV;
   return (sum / float(PH_SAMPLES - 2)) / 1000.0;
+}
+
+// Uses the calibration saved by the calibration sketch, if there is one.
+void loadCalibration() {
+  Preferences prefs;
+  prefs.begin("phcal", true);
+  if (prefs.getBool("valid", false)) {
+    CAL_PH_1      = prefs.getFloat("ph1", CAL_PH_1);
+    CAL_VOLTAGE_1 = prefs.getFloat("v1",  CAL_VOLTAGE_1);
+    CAL_PH_2      = prefs.getFloat("ph2", CAL_PH_2);
+    CAL_VOLTAGE_2 = prefs.getFloat("v2",  CAL_VOLTAGE_2);
+    Serial.printf("Using saved calibration: pH %.2f = %.3f V, pH %.2f = %.3f V\n",
+                  CAL_PH_1, CAL_VOLTAGE_1, CAL_PH_2, CAL_VOLTAGE_2);
+  } else {
+    Serial.println("No saved calibration, using default pH values");
+  }
+  prefs.end();
 }
 
 float voltageToPh(float voltage) {
@@ -347,6 +368,7 @@ void setup() {
 
   analogReadResolution(12);
   analogSetPinAttenuation(PH_PIN, ADC_11db);  // full 0-3.3 V range
+  loadCalibration();
 
   Wire.begin(I2C_SDA, I2C_SCL);
 

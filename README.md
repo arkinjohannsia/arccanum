@@ -77,3 +77,13 @@ The code works as-is with the wiring above; nothing needs to be added or measure
 - **Strip colour:** counts the strip as red-rose when its hue is 330–360° or 0–25° and red is at least 1.4 times green. Yellow is about 40–65°.
 
 Every reading (pH voltage, pH, and the TCS34725 R/G/B/C, hue and saturation values) is printed on the Serial Monitor at 115200 baud. All of these limits are constants at the top of `transmitter/transmitter.ino`.
+
+## pH calibration tool (optional)
+
+`calibration/calibration.ino` runs on the transmitter board with the same wiring. It shows the live probe voltage and pH on the Serial Monitor (115200 baud, line ending "Newline") and on the OLED, and saves a two-point calibration to the ESP32's flash memory:
+
+1. Probe in pH 7.00 buffer (or the BNC socket shorted), wait for `STABLE`, type `7` + Enter.
+2. Rinse, probe in pH 4.00 or 10.00 buffer, wait for `STABLE`, type `4` or `10` + Enter.
+3. Upload the transmitter sketch again. It loads the saved calibration at startup.
+
+`s` shows the saved calibration and `r` erases it. Readings stuck at the ESP32's limits (about 0.14 V or 3.13 V) are refused, because they mean the probe signal is out of range.
