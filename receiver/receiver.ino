@@ -1,46 +1,36 @@
 /*
  * ARCCANUM - Receiver node (ESP32-WROOM-32E)
  *
- * Listens on the RA-02 LoRa module for alerts from the transmitter node.
+ * Listens for alerts from the transmitter node over ESP-NOW, the ESP32's
+ * built-in direct WiFi link (no router, no internet, no password needed).
  *
- *   "ARC,CRIT,<pH>,<seq>"  -> the receiver reads the pH value in the packet and,
- *                             if it is also >= 12.0, switches the RED LED on
- *                             (critical alert).
+ *   "ARC,CRIT,<pH>,<seq>"  -> the receiver reads the pH value in the message
+ *                             and, if it is also >= 12.0, switches the RED LED
+ *                             on (critical alert).
  *   "ARC,COLOR,<pH>,<seq>" -> colour-confirmed alert (picric acid strip turned
  *                             red-rose): switches the GREEN LED on.
  *
  * An LED stays on while alerts keep arriving and switches off once no alert of
  * that kind has been received for ALERT_HOLD_MS.
  *
- * Libraries (Arduino Library Manager):
- *   - LoRa  by Sandeep Mistry
+ * No extra libraries needed (WiFi and ESP-NOW come with the ESP32 board package).
  */
 
-#include <SPI.h>
-#include <LoRa.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 
 // ---------------------------------------------------------------------------
-// Pin map (see README.md for the full wiring table)
+// Pins
 // ---------------------------------------------------------------------------
-#define LORA_SCK   18
-#define LORA_MISO  19
-#define LORA_MOSI  23
-#define LORA_NSS    5
-#define LORA_RST   14
-#define LORA_DIO0  26
-
 #define RED_LED_PIN    27
 #define GREEN_LED_PIN  33
 
 // ---------------------------------------------------------------------------
-// Settings (LoRa values must match the transmitter)
+// Settings (WIFI_CHANNEL must match the transmitter)
 // ---------------------------------------------------------------------------
 const float PH_CRITICAL = 12.0;
-
-const long LORA_FREQUENCY   = 433E6;
-const int  LORA_SF          = 9;
-const long LORA_BANDWIDTH   = 125E3;
-const int  LORA_SYNC_WORD   = 0x3A;
+const int   WIFI_CHANNEL = 1;
 
 #define PACKET_HEADER "ARC"
 
@@ -52,8 +42,34 @@ unsigned long greenOnSince = 0;  // time of the last colour-confirmed alert
 bool redOn = false;
 bool greenOn = false;
 
+// The ESP-NOW callback runs in the WiFi task; it only copies the message here
+// and loop() does the actual work.
+char rxBuffer[64];
+volatile bool rxPending = false;
+
 // ---------------------------------------------------------------------------
-// Packet handling
+// ESP-NOW receive callback (signature differs between ESP32 core 2.x and 3.x)
+// ---------------------------------------------------------------------------
+void storeMessage(const uint8_t *data, int len) {
+  if (rxPending) return;  // previous message not handled yet; alerts repeat
+  int n = min(len, (int)sizeof(rxBuffer) - 1);
+  memcpy(rxBuffer, data, n);
+  rxBuffer[n] = '\0';
+  rxPending = true;
+}
+
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+void onReceive(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  storeMessage(data, len);
+}
+#else
+void onReceive(const uint8_t *mac, const uint8_t *data, int len) {
+  storeMessage(data, len);
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// Message handling
 // ---------------------------------------------------------------------------
 // Splits "ARC,<type>,<pH>,<seq>" into its fields. Returns false if malformed.
 bool parsePacket(String packet, String &type, float &ph, long &seq) {
@@ -76,24 +92,22 @@ void handlePacket(const String &packet) {
   float ph;
   long seq;
 
-  Serial.print("LoRa RX: ");
-  Serial.print(packet);
-  Serial.print("  RSSI ");
-  Serial.println(LoRa.packetRssi());
+  Serial.print("WiFi RX: ");
+  Serial.println(packet);
 
   if (!parsePacket(packet, type, ph, seq)) {
-    Serial.println("  ignored: not an ARCCANUM packet");
+    Serial.println("  ignored: not an ARCCANUM message");
     return;
   }
 
   if (type == "CRIT") {
-    // Double-check the pH carried in the packet before raising the alarm
+    // Double-check the pH carried in the message before raising the alarm
     if (ph >= PH_CRITICAL) {
       redOn = true;
       redOnSince = millis();
       Serial.printf("  CRITICAL alert: pH %.2f -> RED LED ON\n", ph);
     } else {
-      Serial.printf("  CRIT packet with pH %.2f < %.1f, ignored\n", ph, PH_CRITICAL);
+      Serial.printf("  CRIT message with pH %.2f < %.1f, ignored\n", ph, PH_CRITICAL);
     }
   } else if (type == "COLOR") {
     greenOn = true;
@@ -117,11 +131,13 @@ void setup() {
   digitalWrite(RED_LED_PIN, LOW);
   digitalWrite(GREEN_LED_PIN, LOW);
 
-  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
-  LoRa.setPins(LORA_NSS, LORA_RST, LORA_DIO0);
-  while (!LoRa.begin(LORA_FREQUENCY)) {
-    // Blink both LEDs so a wiring fault is visible without a serial monitor
-    Serial.println("RA-02 LoRa init failed, retrying...");
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+
+  while (esp_now_init() != ESP_OK) {
+    // Blink both LEDs so a failure is visible without a serial monitor
+    Serial.println("ESP-NOW init failed, retrying...");
     digitalWrite(RED_LED_PIN, HIGH);
     digitalWrite(GREEN_LED_PIN, HIGH);
     delay(250);
@@ -129,19 +145,16 @@ void setup() {
     digitalWrite(GREEN_LED_PIN, LOW);
     delay(750);
   }
-  LoRa.setSpreadingFactor(LORA_SF);
-  LoRa.setSignalBandwidth(LORA_BANDWIDTH);
-  LoRa.setSyncWord(LORA_SYNC_WORD);
-  LoRa.enableCrc();
+  esp_now_register_recv_cb(onReceive);
 
-  Serial.println("Listening for alerts");
+  Serial.print("Listening for alerts on WiFi channel ");
+  Serial.println(WIFI_CHANNEL);
 }
 
 void loop() {
-  int packetSize = LoRa.parsePacket();
-  if (packetSize > 0) {
-    String packet;
-    while (LoRa.available()) packet += (char)LoRa.read();
+  if (rxPending) {
+    String packet(rxBuffer);
+    rxPending = false;
     handlePacket(packet);
   }
 

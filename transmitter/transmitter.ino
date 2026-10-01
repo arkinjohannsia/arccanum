@@ -4,28 +4,31 @@
  * Continuously reads the water pH through the pH probe + amplifier board and
  * shows it on the SSD1306 OLED. The pH value is the primary decision gate:
  *
- *   pH >= 12.0          -> CRITICAL. Send a LoRa alert immediately, without
+ *   pH >= 12.0          -> CRITICAL. Send a WiFi alert immediately, without
  *                          waiting for the TCS34725 colour sensor.
  *   7.9 < pH < 12.0     -> Intermediate range. Switch on the white LED, let the
  *                          TCS34725 read the picric acid strip and compare it
  *                          with the programmed colour criteria. If the strip
  *                          turned from yellowish to red-rose, NaCN is confirmed:
- *                          show it on the OLED and send a LoRa alert. Otherwise
+ *                          show it on the OLED and send a WiFi alert. Otherwise
  *                          no alert is sent.
  *   pH <= 7.9           -> Outside the detection range. No alert.
  *
  * After every pass the loop starts over and reads the pH again.
  *
+ * Alerts go to the receiver ESP32 over ESP-NOW, the ESP32's built-in direct
+ * WiFi link (no router, no internet, no password needed).
+ *
  * Libraries (Arduino Library Manager):
- *   - LoRa               by Sandeep Mistry
  *   - Adafruit TCS34725
  *   - Adafruit SSD1306   (pulls in Adafruit GFX Library + Adafruit BusIO)
  */
 
-#include <SPI.h>
 #include <Wire.h>
 #include <Preferences.h>
-#include <LoRa.h>
+#include <WiFi.h>
+#include <esp_now.h>
+#include <esp_wifi.h>
 #include <Adafruit_TCS34725.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -33,14 +36,6 @@
 // ---------------------------------------------------------------------------
 // Pin map (see README.md for the full wiring table)
 // ---------------------------------------------------------------------------
-// RA-02 (SX1278) on the VSPI bus
-#define LORA_SCK   18
-#define LORA_MISO  19
-#define LORA_MOSI  23
-#define LORA_NSS    5
-#define LORA_RST   14
-#define LORA_DIO0  26
-
 // I2C bus shared by the TCS34725 and the SSD1306 OLED
 #define I2C_SDA    21
 #define I2C_SCL    22
@@ -92,21 +87,20 @@ const int COLOR_SAMPLES        = 3;      // TCS readings averaged per check
 const unsigned long LED_SETTLE_MS = 150; // let the white LED stabilise
 
 // ---------------------------------------------------------------------------
-// LoRa settings (must match the receiver)
+// WiFi (ESP-NOW) settings (must match the receiver)
 // ---------------------------------------------------------------------------
-const long LORA_FREQUENCY   = 433E6;  // RA-02 is a 433 MHz module
-const int  LORA_SF          = 9;
-const long LORA_BANDWIDTH   = 125E3;
-const int  LORA_SYNC_WORD   = 0x3A;   // private network id, keeps other nodes out
-const int  LORA_TX_POWER    = 17;     // dBm
+const int WIFI_CHANNEL = 1;           // both boards must use the same channel
+
+// Alerts are broadcast, so the receiver's address does not need to be known.
+const uint8_t BROADCAST_ADDRESS[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // Packet format: "ARC,<type>,<pH>,<seq>"   e.g. "ARC,CRIT,12.31,42"
 //   type CRIT  -> pH >= 12.0, sent without colour confirmation
 //   type COLOR -> intermediate pH, confirmed by the red-rose strip colour
 #define PACKET_HEADER "ARC"
 
-// Minimum time between two alerts while the condition persists, so the radio
-// is not flooded. The receiver keeps its LED on while alerts keep arriving.
+// Minimum time between two alerts while the condition persists. Broadcasts are
+// not acknowledged, so repeating the alert also covers a missed packet. The receiver keeps its LED on while alerts keep arriving.
 const unsigned long ALERT_RESEND_MS = 3000;
 
 const unsigned long LOOP_INTERVAL_MS = 1000;
@@ -123,7 +117,7 @@ Adafruit_TCS34725 tcs(TCS34725_INTEGRATIONTIME_154MS, TCS34725_GAIN_4X);
 
 bool displayOk = false;
 bool tcsOk = false;
-bool loraOk = false;
+bool linkOk = false;
 
 uint32_t packetSeq = 0;
 unsigned long lastAlertMs = 0;
@@ -186,7 +180,7 @@ float voltageToPh(float voltage) {
   float slope = (CAL_PH_2 - CAL_PH_1) / (CAL_VOLTAGE_2 - CAL_VOLTAGE_1);
   float ph = CAL_PH_1 + (voltage - CAL_VOLTAGE_1) * slope;
   ph = constrain(ph, 0.0, 14.0);
-  // Round to the 2 decimals shown on the OLED and sent over LoRa, so the
+  // Round to the 2 decimals shown on the OLED and sent over WiFi, so the
   // threshold decision always matches the displayed/transmitted value.
   return roundf(ph * 100.0) / 100.0;
 }
@@ -246,24 +240,26 @@ ColorReading readStripColor() {
 }
 
 // ---------------------------------------------------------------------------
-// LoRa
+// WiFi (ESP-NOW)
 // ---------------------------------------------------------------------------
-bool initLora() {
-  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_NSS);
-  LoRa.setPins(LORA_NSS, LORA_RST, LORA_DIO0);
-  if (!LoRa.begin(LORA_FREQUENCY)) return false;
-  LoRa.setSpreadingFactor(LORA_SF);
-  LoRa.setSignalBandwidth(LORA_BANDWIDTH);
-  LoRa.setSyncWord(LORA_SYNC_WORD);
-  LoRa.setTxPower(LORA_TX_POWER);
-  LoRa.enableCrc();
-  return true;
+bool initLink() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+
+  if (esp_now_init() != ESP_OK) return false;
+
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, BROADCAST_ADDRESS, 6);
+  peer.channel = WIFI_CHANNEL;
+  peer.encrypt = false;
+  return esp_now_add_peer(&peer) == ESP_OK;
 }
 
 // Returns true when a packet actually went out.
 bool sendAlert(const char *type, float ph) {
-  if (!loraOk) {
-    Serial.println("LoRa not available, alert NOT sent");
+  if (!linkOk) {
+    Serial.println("WiFi link not available, alert NOT sent");
     return false;
   }
   unsigned long now = millis();
@@ -276,14 +272,17 @@ bool sendAlert(const char *type, float ph) {
   snprintf(packet, sizeof(packet), "%s,%s,%.2f,%lu",
            PACKET_HEADER, type, ph, (unsigned long)packetSeq++);
 
-  LoRa.beginPacket();
-  LoRa.print(packet);
-  LoRa.endPacket();
+  esp_err_t result = esp_now_send(BROADCAST_ADDRESS, (const uint8_t *)packet,
+                                  strlen(packet) + 1);
+  if (result != ESP_OK) {
+    Serial.printf("WiFi send failed (error %d)\n", result);
+    return false;
+  }
 
   lastAlertMs = now;
   lastAlertType = type;
   alertSentBefore = true;
-  Serial.print("LoRa TX: ");
+  Serial.print("WiFi TX: ");
   Serial.println(packet);
   return true;
 }
@@ -301,7 +300,7 @@ void showScreen(float ph, Status status, const ColorReading *cr, bool alertSent)
   display.setCursor(0, 0);
   display.print("pH MONITOR");
   display.setCursor(80, 0);
-  display.print(loraOk ? "LoRa OK" : "LoRa ERR");
+  display.print(linkOk ? "WiFi OK" : "WiFi ERR");
 
   display.setTextSize(2);
   display.setCursor(0, 14);
@@ -337,7 +336,7 @@ void showScreen(float ph, Status status, const ColorReading *cr, bool alertSent)
 
   display.setCursor(0, 56);
   if (status == STATUS_CRITICAL || status == STATUS_NACN) {
-    display.print(alertSent ? "Alert sent via LoRa" : "Alert active");
+    display.print(alertSent ? "Alert sent via WiFi" : "Alert active");
   }
 
   display.display();
@@ -378,8 +377,8 @@ void setup() {
   tcsOk = tcs.begin();
   if (!tcsOk) showBootError("TCS34725 not found");
 
-  loraOk = initLora();
-  if (!loraOk) showBootError("RA-02 LoRa init failed");
+  linkOk = initLink();
+  if (!linkOk) showBootError("WiFi (ESP-NOW) init failed");
 
   Serial.println("Ready");
 }

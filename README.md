@@ -1,9 +1,9 @@
 # ARCCANUM – pH + colorimetric NaCN alert system
 
-Two ESP32-WROOM-32E nodes linked by RA-02 (SX1278, 433 MHz) LoRa modules.
+Two ESP32-WROOM-32E boards linked directly over WiFi using ESP-NOW, the ESP32's built-in board-to-board radio link. It needs no router, internet, password or extra modules.
 
-- **Transmitter** (`transmitter/transmitter.ino`): pH probe + amplifier, TCS34725 colour sensor, white LED, SSD1306 OLED, RA-02.
-- **Receiver** (`receiver/receiver.ino`): RA-02, red LED, green LED.
+- **Transmitter** (`transmitter/transmitter.ino`): pH probe + amplifier, TCS34725 colour sensor, white LED, SSD1306 OLED.
+- **Receiver** (`receiver/receiver.ino`): red LED, green LED.
 
 ## Detection logic
 
@@ -20,10 +20,10 @@ Two ESP32-WROOM-32E nodes linked by RA-02 (SX1278, 433 MHz) LoRa modules.
    │            │yes
    │     OLED: "NaCN DETECTED!"
    ▼            ▼
- LoRa "CRIT"   LoRa "COLOR"
+ WiFi "CRIT"   WiFi "COLOR"
    │            │
    ▼            ▼
- Receiver: pH in packet ≥ 12.0 → RED LED     Receiver: GREEN LED
+ Receiver: pH in message ≥ 12.0 → RED LED     Receiver: GREEN LED
 ```
 
 - The pH sensor is the primary gate. At pH ≥ 12.0 the alert goes out immediately, with no colour confirmation.
@@ -31,7 +31,7 @@ Two ESP32-WROOM-32E nodes linked by RA-02 (SX1278, 433 MHz) LoRa modules.
 - The spec gives the intermediate range as "greater than 7.9 but less than 11.9". The code uses **7.9 < pH < 12.0**, so no gap is left between 11.9 and 12.0. Both limits are constants (`PH_COLOR_CHECK`, `PH_CRITICAL`) at the top of the transmitter sketch.
 - While a condition persists, the alert is re-sent at most every 3 s (`ALERT_RESEND_MS`). The receiver keeps its LED lit while alerts keep arriving and turns it off 15 s after the last one (`ALERT_HOLD_MS`).
 
-LoRa packet: `ARC,<CRIT|COLOR>,<pH>,<sequence>`, for example `ARC,CRIT,12.31,42`.
+WiFi message: `ARC,<CRIT|COLOR>,<pH>,<sequence>`, for example `ARC,CRIT,12.31,42`. It is broadcast on WiFi channel 1 (`WIFI_CHANNEL`, which must be the same in both sketches), so neither board needs to know the other's address. Broadcasts aren't acknowledged, but the alert repeats every 3 s while the condition lasts.
 
 ## Wiring
 
@@ -39,9 +39,6 @@ LoRa packet: `ARC,<CRIT|COLOR>,<pH>,<sequence>`, for example `ARC,CRIT,12.31,42`
 
 | Part | Pin | ESP32 GPIO |
 |---|---|---|
-| RA-02 | SCK / MISO / MOSI / NSS | 18 / 19 / 23 / 5 |
-| RA-02 | RST / DIO0 | 14 / 26 |
-| RA-02 | VCC | **3.3 V only** |
 | TCS34725 + SSD1306 (shared I2C) | SDA / SCL | 21 / 22 |
 | pH amplifier (PO / analog out) | direct | 34 |
 | White LED (via resistor or transistor) | + | 25 |
@@ -52,18 +49,13 @@ If your TCS34725 breakout has its own white LED, you can drive its `LED` pin fro
 
 | Part | Pin | ESP32 GPIO |
 |---|---|---|
-| RA-02 | SCK / MISO / MOSI / NSS | 18 / 19 / 23 / 5 |
-| RA-02 | RST / DIO0 | 14 / 26 |
 | Red LED (via 220 Ω) | + | 27 |
 | Green LED (via 220 Ω) | + | 33 |
 
-Always attach the antenna before powering the RA-02 modules.
-
 ## Libraries
 
-Install with the Arduino Library Manager:
+WiFi and ESP-NOW come with the ESP32 board package. The transmitter also needs these, from the Arduino Library Manager:
 
-- **LoRa** by Sandeep Mistry
 - **Adafruit TCS34725**
 - **Adafruit SSD1306** (installs Adafruit GFX and Adafruit BusIO)
 
