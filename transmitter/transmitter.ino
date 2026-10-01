@@ -6,7 +6,7 @@
  *
  *   pH >= 12.0          -> CRITICAL. Send a WiFi alert immediately, without
  *                          waiting for the TCS34725 colour sensor. The white
- *                          LED stays on while the pH remains critical.
+ *                          LED lights up once for 5 seconds.
  *   7.9 < pH < 12.0     -> Intermediate range. Switch on the white LED, let the
  *                          TCS34725 read the picric acid strip and compare it
  *                          with the programmed colour criteria. If the strip
@@ -44,8 +44,8 @@
 // pH amplifier analog output (PO), wired directly to this pin
 #define PH_PIN     34
 
-// White LED: lights the strip for the TCS34725, and stays on as a local
-// warning light while the pH is critical (>= 12.0)
+// White LED: lights the strip steadily while the pH is in the colour-check
+// range, and lights up once for 5 s when the pH becomes critical (>= 12.0)
 #define WHITE_LED_PIN 25
 
 // ---------------------------------------------------------------------------
@@ -88,6 +88,9 @@ const uint16_t MIN_CLEAR       = 100;    // reject readings that are too dark
 const int COLOR_SAMPLES        = 3;      // TCS readings averaged per check
 const unsigned long LED_SETTLE_MS = 150; // let the white LED stabilise
 
+// How long the white LED stays on when the pH becomes critical
+const unsigned long CRITICAL_LIGHT_MS = 5000;
+
 // ---------------------------------------------------------------------------
 // WiFi (ESP-NOW) settings (must match the receiver)
 // ---------------------------------------------------------------------------
@@ -124,6 +127,11 @@ bool linkOk = false;
 uint32_t packetSeq = 0;
 unsigned long lastAlertMs = 0;
 bool alertSentBefore = false;
+
+bool whiteLedOn = false;
+bool wasCritical = false;            // pH was critical on the previous reading
+bool criticalLightActive = false;    // 5 s critical light is running
+unsigned long criticalLightStart = 0;
 const char *lastAlertType = "";
 
 enum Status {
@@ -217,11 +225,26 @@ bool matchesRedRose(const ColorReading &cr) {
   return cr.hue >= RED_ROSE_HUE_LOW || cr.hue <= RED_ROSE_HUE_HIGH;
 }
 
+void setWhiteLed(bool on) {
+  if (on == whiteLedOn) return;
+  digitalWrite(WHITE_LED_PIN, on ? HIGH : LOW);
+  whiteLedOn = on;
+}
+
+// The 5 s critical light has run out
+bool criticalLightExpired() {
+  return criticalLightActive && millis() - criticalLightStart >= CRITICAL_LIGHT_MS;
+}
+
 ColorReading readStripColor() {
   ColorReading cr = {};
 
-  digitalWrite(WHITE_LED_PIN, HIGH);
-  delay(LED_SETTLE_MS);
+  // The LED stays on for as long as the pH is in the colour-check range, so it
+  // only needs time to settle when it has just been switched on.
+  if (!whiteLedOn) {
+    setWhiteLed(true);
+    delay(LED_SETTLE_MS);
+  }
 
   uint32_t sumR = 0, sumG = 0, sumB = 0, sumC = 0;
   for (int i = 0; i < COLOR_SAMPLES; i++) {
@@ -229,8 +252,6 @@ ColorReading readStripColor() {
     tcs.getRawData(&r, &g, &b, &c);  // blocks for one integration period
     sumR += r; sumG += g; sumB += b; sumC += c;
   }
-
-  digitalWrite(WHITE_LED_PIN, LOW);
 
   cr.r = sumR / COLOR_SAMPLES;
   cr.g = sumG / COLOR_SAMPLES;
@@ -433,9 +454,21 @@ void loop() {
     status = STATUS_NORMAL;
   }
 
-  // White LED as a warning light: on while critical, off otherwise. (In the
-  // intermediate range readStripColor() already switched it on and off.)
-  digitalWrite(WHITE_LED_PIN, status == STATUS_CRITICAL ? HIGH : LOW);
+  // White LED:
+  //  - pH just became critical -> light up once for CRITICAL_LIGHT_MS
+  //    (it does not restart while the pH stays critical)
+  //  - colour-check range      -> steady light for the TCS34725
+  //  - otherwise               -> off
+  bool critical = (status == STATUS_CRITICAL);
+  if (critical && !wasCritical) {
+    criticalLightActive = true;
+    criticalLightStart = millis();
+  }
+  wasCritical = critical;
+  if (criticalLightExpired()) criticalLightActive = false;
+
+  bool colorRange = (status == STATUS_CHECKING || status == STATUS_NACN);
+  setWhiteLed(criticalLightActive || colorRange);
 
   // Once the alert condition clears, the next alert goes out without waiting.
   if (status != STATUS_CRITICAL && status != STATUS_NACN) {
@@ -445,6 +478,12 @@ void loop() {
   showScreen(ph, status, haveColor ? &color : nullptr, alertSent);
 
   // 3. Back to the start of the monitoring cycle
-  unsigned long elapsed = millis() - start;
-  if (elapsed < LOOP_INTERVAL_MS) delay(LOOP_INTERVAL_MS - elapsed);
+  // (switching the 5 s critical light off on time, not up to a second late)
+  while (millis() - start < LOOP_INTERVAL_MS) {
+    if (criticalLightExpired()) {
+      criticalLightActive = false;
+      setWhiteLed(false);
+    }
+    delay(10);
+  }
 }
