@@ -26,7 +26,7 @@ Two ESP32-WROOM-32E boards linked directly over WiFi using ESP-NOW, the ESP32's 
  Receiver: pH in message ≥ 12.0 → flashing OLED alert     Receiver: GREEN LED
 ```
 
-- The pH sensor is the primary gate. At pH ≥ 12.0 the alert goes out immediately, with no colour confirmation.
+- The pH sensor is the primary gate. At pH ≥ 12.0 the alert goes out immediately, with no colour confirmation, and the transmitter's white LED stays on as a warning light until the pH drops below 12.0.
 - The TCS34725 is only used in the intermediate range (the white LED is switched on just for that reading).
 - The spec gives the intermediate range as "greater than 7.9 but less than 11.9". The code uses **7.9 < pH < 12.0**, so no gap is left between 11.9 and 12.0. Both limits are constants (`PH_COLOR_CHECK`, `PH_CRITICAL`) at the top of the transmitter sketch.
 - While a condition persists, the alert is re-sent at most every 3 s (`ALERT_RESEND_MS`). The receiver keeps its alert (OLED or LED) on while alerts keep arriving and clears it 15 s after the last one (`ALERT_HOLD_MS`).

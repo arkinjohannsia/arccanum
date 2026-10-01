@@ -5,7 +5,8 @@
  * shows it on the SSD1306 OLED. The pH value is the primary decision gate:
  *
  *   pH >= 12.0          -> CRITICAL. Send a WiFi alert immediately, without
- *                          waiting for the TCS34725 colour sensor.
+ *                          waiting for the TCS34725 colour sensor. The white
+ *                          LED stays on while the pH remains critical.
  *   7.9 < pH < 12.0     -> Intermediate range. Switch on the white LED, let the
  *                          TCS34725 read the picric acid strip and compare it
  *                          with the programmed colour criteria. If the strip
@@ -43,7 +44,8 @@
 // pH amplifier analog output (PO), wired directly to this pin
 #define PH_PIN     34
 
-// White illumination LED for the TCS34725 (or the breakout's LED pin)
+// White LED: lights the strip for the TCS34725, and stays on as a local
+// warning light while the pH is critical (>= 12.0)
 #define WHITE_LED_PIN 25
 
 // ---------------------------------------------------------------------------
@@ -430,6 +432,10 @@ void loop() {
     // 2c. pH <= 7.9: outside the detection range, keep monitoring
     status = STATUS_NORMAL;
   }
+
+  // White LED as a warning light: on while critical, off otherwise. (In the
+  // intermediate range readStripColor() already switched it on and off.)
+  digitalWrite(WHITE_LED_PIN, status == STATUS_CRITICAL ? HIGH : LOW);
 
   // Once the alert condition clears, the next alert goes out without waiting.
   if (status != STATUS_CRITICAL && status != STATUS_NACN) {
